@@ -52,29 +52,29 @@ namespace EasySmhiRestApi.Controllers
             if (requestBody.RequestType == "hour")
             {
                 result = _openSmhiDataClient?.GetTempAndWindForStationById(requestBody.StationId, requestBody.RequestType, SmhiEndpoint.GetLastHourTempratureForStationById, SmhiEndpoint.GetGustWindForLastHourForStationById).Result;
-                if (result!.IsEmpty)
-                {
-                    return NotFound();
-                }
-                else
-                {
-                    return Ok(result.Values.First());
-                }
+               
+                return VerifySingleResult(result);
             }
             if (requestBody.RequestType == "day")
             {
                 result = _openSmhiDataClient.GetTempAndWindForStationById(requestBody.StationId, requestBody.RequestType, SmhiEndpoint.GetTempratrueForStationLastDay, SmhiEndpoint.GetByVindForCompleteDayForStaionById).Result;
-                if (result!.IsEmpty)
-                {
-                    return NotFound();
-                }
-                else
-                {
-                    return Ok(result.Values.First());
-                }
+                
+                return VerifySingleResult(result);
             }
 
             return BadRequest("Invalid body");
+        }
+
+        private IActionResult VerifySingleResult(ConcurrentDictionary<string, WindAndTempratureResult> result)
+        {
+            if (result!.IsEmpty)
+            {
+                return NotFound();
+            }
+            else
+            {
+                return Ok(result.Values.First());
+            }
         }
     }
 }

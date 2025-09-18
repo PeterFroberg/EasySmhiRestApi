@@ -31,114 +31,17 @@
 
         public async Task<ConcurrentDictionary<string, WindAndTempratureResult>> GetTempAndWindForStationById(string stationId, string requestType, string smhiTempratureUrl, string smhiWindUrl)
         {
-            ConcurrentDictionary<string, WindAndTempratureResult> resultDictionary = new ConcurrentDictionary<string, WindAndTempratureResult>();
+            var results = new ConcurrentDictionary<string, WindAndTempratureResult>();
 
-            async Task FetchSmhiTempratureData()
-            {
-                var smhiResponseForTemprature = await GetDataFromSmhi(smhiTempratureUrl.Replace("--STATION_ID--", stationId));
-                if (!string.IsNullOrEmpty(smhiResponseForTemprature))
-                {
-                    var weatherStation = await ParseSingelStationData(smhiResponseForTemprature);
-                    if (weatherStation != null)
-                    {
-                        resultDictionary.AddOrUpdate(
-                            weatherStation.Key,
-                            _ = new WindAndTempratureResult
-                            {
-                                WeatherStation = weatherStation,
-                                AirTemprature = weatherStation?.Values?.Count == 0 ? null : weatherStation?.Values?.First()
-                            },
-                            (_, existing) =>
-                            {
-                                existing.AirTemprature = weatherStation?.Values?.Count == 0
-                                 ? null
-                                 : weatherStation?.Values?.First();
-                                return existing;
-                            }
-                        );
-                    }
-                }
-            }
+            var tempratureTask = FetchSmhiTemperatureDataHourAsync(stationId, smhiTempratureUrl, results);
+            var gustWindTask = requestType == "hour"
+                ? FetchSmhiGustWindDataHourAsync(stationId, smhiWindUrl, results)
+                : FetchSmhiGustWindDataDayAsync(stationId, smhiWindUrl, results);
 
-            async Task FetchSmhiGustWindDataForHour()
-            {
-                var smhiResponseForGustWind = await GetDataFromSmhi(smhiWindUrl.Replace("--STATION_ID--", stationId));
-                if (!string.IsNullOrEmpty(smhiResponseForGustWind))
-                {
-                    var weatherStation = await ParseSingelStationData(smhiResponseForGustWind);
-                    if (weatherStation != null)
-                    {
-                        resultDictionary.AddOrUpdate(
-                             weatherStation.Key,
-                             _ = new WindAndTempratureResult
-                             {
-                                 WeatherStation = weatherStation,
-                                 GustWind = weatherStation?.Values?.Count == 0 ? null : weatherStation?.Values?.First()
-                             },
-                             (_, existing) =>
-                             {
-                                 existing.GustWind = weatherStation?.Values?.Count == 0
-                                  ? null
-                                  : weatherStation?.Values?.First();
-                                 return existing;
-                             }
-                        );
-                    }
-                }
-            }
+            await Task.WhenAll(tempratureTask, gustWindTask);
 
-            async Task FetchSmhiGustWindDataForDay()
-            {
-                var smhiResponseForGustWind = await GetDataFromSmhi(smhiWindUrl.Replace("--STATION_ID--", stationId));
-                if (!string.IsNullOrEmpty(smhiResponseForGustWind))
-                {
-                    var weatherStation = await ParseSingelStationData(smhiResponseForGustWind);
-                    if (weatherStation != null)
-                    {
-                        var windValues = weatherStation.Values
-                        .Select(value =>
-                        {
-                            bool success = double.TryParse(value.DataValue, NumberStyles.Any, CultureInfo.InvariantCulture, out double result);
-                            return new { success, result };
-                        })
-                        .Where(x => x.success)
-                        .Select(x => x.result).ToList();
-
-                        var averageWind = windValues.Any() ? Math.Round(windValues.Average(), 1) : double.NaN;
-
-                        resultDictionary.AddOrUpdate(
-                            weatherStation.Key,
-                            _ = new WindAndTempratureResult
-                            {
-                                WeatherStation = weatherStation,
-                                GustWind = new Value()
-                                {
-                                    DataValue = averageWind.ToString()
-                                }
-                            },
-                            (_, existing) =>
-                            {
-                                existing.GustWind = new Value()
-                                {
-                                    DataValue = averageWind.ToString(CultureInfo.InvariantCulture)
-                                };
-                                existing.WeatherStation.Values = null;
-
-                                return existing;
-                            }
-                        );
-                    }
-                }
-            }
-            await Task.WhenAll(
-                FetchSmhiTempratureData(),
-                requestType == "hour" ? FetchSmhiGustWindDataForHour() : FetchSmhiGustWindDataForDay()
-                );
-
-            return resultDictionary;
+            return results;
         }
-
-
 
         public async Task<ConcurrentDictionary<string, WindAndTempratureResult>> GetTempAndWindForAllStations()
         {
@@ -155,27 +58,40 @@
                     {
                         resultDictionary.AddOrUpdate(
                             weatherStation.Key,
-                            _ = new WindAndTempratureResult
+                            _ =>
                             {
-                                WeatherStation = weatherStation.Value,
-                                AirTemprature = weatherStation.Value?.Values.Count == 0 ? null : weatherStation.Value.Values.First()
-                            },
-                            (_, existing) =>
-                            {
-                                existing.AirTemprature = weatherStation.Value?.Values.Count == 0
-                                 ? null
-                                 : weatherStation.Value.Values.First();
+                                var firstValue = weatherStation.Value?.Values?.FirstOrDefault();
+                                var newResult = new WindAndTempratureResult
+                                {
+                                    WeatherStation = weatherStation.Value,
+                                    AirTemprature = firstValue
+                                };
 
-                                return existing;
+                                if (weatherStation.Value != null)
+                                {
+                                    weatherStation.Value.Values = null;
+                                }
+
+                                return newResult;
+                            },
+                        (_, existing) =>
+                        {
+                            var firstValue = weatherStation.Value?.Values?.FirstOrDefault();
+                            existing.AirTemprature = firstValue;
+
+                            if (weatherStation.Value != null)
+                            {
+                                weatherStation.Value.Values = null;
                             }
-                        );
+
+                            return existing;
+                        });
                     }
                 }
             }
 
             async Task FetchSmhiGustWindData()
             {
-
                 var smhiResponseForGustWind = await GetDataFromSmhi(SmhiEndpoint.GetGustWindForAllStationsLatestHour);
                 if (!string.IsNullOrEmpty(smhiResponseForGustWind))
                 {
@@ -184,20 +100,35 @@
                     {
                         resultDictionary.AddOrUpdate(
                             weatherStation.Key,
-                            _ = new WindAndTempratureResult
+                            _ =>
                             {
-                                WeatherStation = weatherStation.Value,
-                                GustWind = weatherStation.Value?.Values.Count == 0 ? null : weatherStation.Value.Values.First()
+                                var firstValue = weatherStation.Value?.Values?.FirstOrDefault();
+
+                                var newResult = new WindAndTempratureResult
+                                {
+                                    WeatherStation = weatherStation.Value,
+                                    GustWind = firstValue
+                                };
+
+                                if (weatherStation.Value != null)
+                                {
+                                    weatherStation.Value.Values = null;
+                                }
+
+                                return newResult;
                             },
                             (_, existing) =>
                             {
-                                existing.GustWind = weatherStation.Value?.Values.Count == 0
-                                 ? null
-                                 : weatherStation.Value.Values.First();
+                                var firstValue = weatherStation.Value?.Values?.FirstOrDefault();
+                                existing.GustWind = firstValue;
+
+                                if (weatherStation.Value != null)
+                                {
+                                    weatherStation.Value.Values = null;
+                                }
 
                                 return existing;
-                            }
-                        );
+                            });
                     }
                 }
             }
@@ -235,5 +166,101 @@
 
             return string.Empty;
         }
+
+        private async Task FetchSmhiTemperatureDataHourAsync(
+            string stationId,
+            string smhiTemperatureUrl,
+            ConcurrentDictionary<string, WindAndTempratureResult> results)
+        {
+            var json = await GetDataFromSmhi(smhiTemperatureUrl.Replace("--STATION_ID--", stationId));
+            if (string.IsNullOrEmpty(json)) return;
+
+            var weatherStation = await ParseSingelStationData(json);
+            if (weatherStation == null) return;
+
+            results.AddOrUpdate(
+                weatherStation.Key,
+                _ =>
+                {
+                    var firstValue = weatherStation.Values?.Count == 0 ? null : weatherStation.Values.First();
+                    var newReult = new WindAndTempratureResult
+                    {
+                        WeatherStation = weatherStation,
+                        AirTemprature = firstValue
+                    };
+
+                    weatherStation.Values = null;
+
+                    return newReult;
+                },
+                (_, existing) =>
+                {
+                    existing.AirTemprature = weatherStation.Values?.Count == 0 ? null : weatherStation.Values.First();
+                    return existing;
+                });
+        }
+
+        private async Task FetchSmhiGustWindDataHourAsync(
+            string stationId,
+            string smhiWindUrl,
+            ConcurrentDictionary<string, WindAndTempratureResult> results)
+        {
+            var json = await GetDataFromSmhi(smhiWindUrl.Replace("--STATION_ID--", stationId));
+            if (string.IsNullOrEmpty(json)) return;
+
+            var weatherStation = await ParseSingelStationData(json);
+            if (weatherStation == null) return;
+
+            results.AddOrUpdate(
+                weatherStation.Key,
+                _ => new WindAndTempratureResult
+                {
+                    WeatherStation = weatherStation,
+                    GustWind = weatherStation.Values?.Count == 0 ? null : weatherStation.Values.First()
+                },
+                (_, existing) =>
+                {
+                    existing.GustWind = weatherStation.Values?.Count == 0 ? null : weatherStation.Values.First();
+                    return existing;
+                });
+        }
+
+        private async Task FetchSmhiGustWindDataDayAsync(
+            string stationId,
+            string smhiWindUrl,
+            ConcurrentDictionary<string, WindAndTempratureResult> results)
+        {
+            var json = await GetDataFromSmhi(smhiWindUrl.Replace("--STATION_ID--", stationId));
+            if (string.IsNullOrEmpty(json)) return;
+
+            var weatherStation = await ParseSingelStationData(json);
+            if (weatherStation == null) return;
+
+            var windValues = weatherStation.Values
+                .Select(v => double.TryParse(v.DataValue, NumberStyles.Any,
+                                             CultureInfo.InvariantCulture, out var d)
+                                ? (double?)d : null)
+                .Where(d => d.HasValue)
+                .Select(d => d.Value)
+                .ToList();
+
+            var averageWind = windValues.Any() ? Math.Round(windValues.Average(), 1) : double.NaN;
+            weatherStation.Values = null;
+
+            results.AddOrUpdate(
+                weatherStation.Key,
+                _ => new WindAndTempratureResult
+                {
+                    WeatherStation = weatherStation,
+                    GustWind = new Value { DataValue = averageWind.ToString(CultureInfo.InvariantCulture) }
+                },
+                (_, existing) =>
+                {
+                    existing.GustWind = new Value { DataValue = averageWind.ToString(CultureInfo.InvariantCulture) };
+
+                    return existing;
+                });
+        }
+
     }
 }
