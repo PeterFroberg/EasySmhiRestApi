@@ -22,11 +22,11 @@
     - How is Datadelivered
     - Find suitable enpoints to get correct data
     - using Postman to access the SMHI API and test endpoints
-- Create result models for easy delivery through REST API
+- Create resultmodels for easy delivery through REST API
 - "Secure" API access with API key
     - For easy demonstration API key is stored in appsetting.json
     - Clients add the API-key in the header
-        - -Return a unauthorized response if API i missing or invalid
+        - Return a unauthorized response if API i missing or invalid
 - Create Single staion request
     - Minimize response time 
         - Get data in parallell and build the response
